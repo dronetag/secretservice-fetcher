@@ -90,7 +90,13 @@ def _make_ss_backend(initial=None):
         return False
 
     be = object.__new__(SecretServiceBackend)
-    be._ss = types.SimpleNamespace(get_default_collection=lambda conn: Collection())
+    be._ss = types.SimpleNamespace(
+        get_default_collection=lambda conn: Collection(),
+        get_all_collections=lambda conn: [Collection()],
+        # Service-wide search (across all collections), as the real module
+        # provides; here there is one collection backed by the same store.
+        search_items=lambda conn, attrs: Collection().search_items(attrs),
+    )
     be._conn = object()
     be._unlock_objects = unlock_objects
     return be, store, calls
@@ -128,6 +134,45 @@ def test_secret_service_exists_does_not_unlock():
     assert be.exists(ref) is True
     assert be.exists({"app": "a", "kind": "env", "name": "nope"}) is False
     assert calls["unlock"] == 0  # presence check never unlocks/decrypts
+
+
+def test_secret_service_lookup_falls_back_to_other_collection():
+    """A secret in a non-default collection (or behind an unstable `default`
+    alias) is still found, via the service-wide search -- like `secret-tool`."""
+
+    ref = {"app": "a", "kind": "env", "name": "A"}
+
+    class Item:
+        item_path = "/item/A"
+
+        def is_locked(self):
+            return False
+
+        def get_secret(self):
+            return b"val"
+
+    class EmptyDefault:  # the default collection holds nothing
+        def is_locked(self):
+            return False
+
+        def unlock(self):
+            pass
+
+        def search_items(self, attrs):
+            return iter(())
+
+    be = object.__new__(SecretServiceBackend)
+    be._ss = types.SimpleNamespace(
+        get_default_collection=lambda conn: EmptyDefault(),
+        get_all_collections=lambda conn: [EmptyDefault()],
+        search_items=lambda conn, attrs: iter([Item()]),  # but it exists service-wide
+    )
+    be._conn = object()
+    be._unlock_objects = lambda conn, paths: False
+
+    assert be.lookup(ref) == b"val"
+    assert be.lookup_many([ref]) == [b"val"]
+    assert be.exists(ref) is True
 
 
 def test_secret_service_errors_are_wrapped():

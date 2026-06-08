@@ -24,6 +24,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from . import debug
+
 if TYPE_CHECKING:
     from .config import ConfigEntry, EnvEntry, RcSecret
 
@@ -112,6 +114,9 @@ class SecretServiceBackend(Backend):
             self._conn = secretstorage.dbus_init()
         except Exception as exc:  # noqa: BLE001 - surface any D-Bus failure cleanly
             raise SecretServiceError(f"cannot reach the Secret Service over D-Bus: {exc}") from exc
+        debug.log("secret-service: connected to the Secret Service over D-Bus")
+        if debug.enabled():
+            self._debug_dump_collections()
 
     # --- ref derivation ---------------------------------------------------
 
@@ -128,22 +133,111 @@ class SecretServiceBackend(Backend):
 
     def _collection(self) -> Any:
         collection = self._ss.get_default_collection(self._conn)
+        if debug.enabled():
+            try:
+                debug.log(
+                    f"default collection: label={collection.get_label()!r} "
+                    f"path={collection.collection_path} locked={collection.is_locked()}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                debug.log(f"default collection: <info unavailable: {exc}>")
         if collection.is_locked():
+            debug.log("default collection is locked; unlocking")
             collection.unlock()
         return collection
 
     def _unlock(self, items: list[Any]) -> None:
         paths = [it.item_path for it in items if it is not None and it.is_locked()]
         if paths:
+            debug.log(f"unlocking {len(paths)} item(s) in one call")
             self._unlock_objects(self._conn, paths)  # one call for the whole batch
+
+    # --- debug tracing (no secret values, only metadata) ------------------
+
+    def _debug_dump_collections(self) -> None:
+        try:
+            default_path = self._ss.get_default_collection(self._conn).collection_path
+        except Exception:  # noqa: BLE001
+            default_path = None
+        try:
+            colls = list(self._ss.get_all_collections(self._conn))
+        except Exception as exc:  # noqa: BLE001
+            debug.log(f"cannot enumerate collections: {exc}")
+            return
+        debug.log(f"collections ({len(colls)}):")
+        for c in colls:
+            try:
+                mark = " (default)" if c.collection_path == default_path else ""
+                debug.log(
+                    f"  label={c.get_label()!r} path={c.collection_path} "
+                    f"locked={c.is_locked()}{mark}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                debug.log(f"  <collection info unavailable: {exc}>")
+
+    def _debug_item(self, item: Any, indent: str = "    ") -> None:
+        try:
+            attrs = item.get_attributes()
+        except Exception as exc:  # noqa: BLE001
+            attrs = f"<unavailable: {exc}>"
+        try:
+            label = item.get_label()
+        except Exception as exc:  # noqa: BLE001
+            label = f"<unavailable: {exc}>"
+        try:
+            locked = item.is_locked()
+        except Exception:  # noqa: BLE001
+            locked = None
+        debug.log(f"{indent}item label={label!r} locked={locked} path={item.item_path}")
+        debug.log(f"{indent}  attrs={attrs}")
+
+    def _find(self, collection: Any, ref: dict[str, str]) -> Any:
+        """Locate one item for *ref*.
+
+        The default collection is tried first; on a miss we fall back to a
+        service-wide search across ALL collections -- which is what the
+        ``secret-tool`` CLI does. That keeps lookups working when a secret was
+        stored in a non-default collection, or when the providers's ``default``
+        alias points at a different collection than the one holding the item
+        (e.g. KeePassXC with more than one database unlocked).
+        """
+
+        found = list(collection.search_items(ref))
+        debug.log(
+            f"lookup: [{self.describe(ref)}] -> {len(found)} match(es) in default collection"
+        )
+        if debug.enabled():
+            for it in found:
+                self._debug_item(it)
+        if found:
+            return found[0]
+
+        try:
+            other = list(self._ss.search_items(self._conn, ref))
+        except Exception as exc:  # noqa: BLE001
+            debug.log(f"    service-wide search failed: {exc}")
+            return None
+        debug.log(f"    service-wide search (all collections): {len(other)} item(s)")
+        if debug.enabled():
+            for it in other:
+                self._debug_item(it)
+        if not other:
+            return None
+        if len(other) > 1:
+            debug.log(f"    {len(other)} service-wide matches; using the first")
+        else:
+            debug.log("    found outside the default collection; using it")
+        return other[0]
 
     # --- Backend interface ------------------------------------------------
 
     def store(self, ref: dict[str, str], label: str, secret: bytes) -> None:
+        debug.log(f"store: label={label!r} attrs=[{self.describe(ref)}] ({len(secret)} bytes)")
         try:
             self._collection().create_item(label, ref, secret, replace=True)
         except Exception as exc:  # noqa: BLE001
             raise SecretServiceError(f"Secret Service store failed: {exc}") from exc
+        debug.log("store: ok")
 
     def lookup(self, ref: dict[str, str]) -> bytes | None:
         return self.lookup_many([ref])[0]
@@ -153,15 +247,28 @@ class SecretServiceBackend(Backend):
             return []
         try:
             collection = self._collection()
-            items = [next(iter(collection.search_items(ref)), None) for ref in refs]
+            items: list[Any] = [self._find(collection, ref) for ref in refs]
             self._unlock(items)  # unlock every found item in a single call
-            return [bytes(it.get_secret()) if it is not None else None for it in items]
+            out: list[bytes | None] = []
+            for ref, it in zip(refs, items):
+                if it is None:
+                    out.append(None)
+                else:
+                    secret = bytes(it.get_secret())
+                    debug.log(f"lookup: [{self.describe(ref)}] -> read {len(secret)} byte(s)")
+                    out.append(secret)
+            return out
         except Exception as exc:  # noqa: BLE001
             raise SecretServiceError(f"Secret Service lookup failed: {exc}") from exc
 
     def clear(self, ref: dict[str, str]) -> None:
         try:
-            items = list(self._collection().search_items(ref))
+            # Delete matches across ALL collections, not just the default one,
+            # so `rm` doesn't leave a stale copy in another collection.
+            items = list(self._ss.search_items(self._conn, ref))
+            debug.log(
+                f"clear: [{self.describe(ref)}] -> {len(items)} item(s) across all collections"
+            )
             self._unlock(items)
             for item in items:
                 item.delete()
@@ -169,9 +276,14 @@ class SecretServiceBackend(Backend):
             raise SecretServiceError(f"Secret Service delete failed: {exc}") from exc
 
     def exists(self, ref: dict[str, str]) -> bool:
-        # Cheap presence check: search only, no unlock/decrypt (avoids a prompt).
+        # Cheap presence check (search only, no unlock/decrypt): default
+        # collection first, then service-wide across all collections.
         try:
-            return next(iter(self._collection().search_items(ref)), None) is not None
+            present = next(iter(self._collection().search_items(ref)), None) is not None
+            if not present:
+                present = next(iter(self._ss.search_items(self._conn, ref)), None) is not None
+            debug.log(f"exists: [{self.describe(ref)}] -> {present}")
+            return present
         except Exception as exc:  # noqa: BLE001
             raise SecretServiceError(f"Secret Service search failed: {exc}") from exc
 

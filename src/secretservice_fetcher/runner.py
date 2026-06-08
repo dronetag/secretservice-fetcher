@@ -26,6 +26,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import debug
 from .backend import Backend, BackendError
 from .config import ConfigEntry, EnvEntry, RcSecret
 
@@ -238,6 +239,9 @@ def prepare(rc: RcSecret, backend: Backend) -> Prepared:
     """
 
     directory = rc.prepare_directory()
+    debug.log(
+        f"prepare: dir={directory} configs={len(rc.configs)} env_vars={len(rc.env)}"
+    )
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
 

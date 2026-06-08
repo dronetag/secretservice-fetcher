@@ -199,6 +199,27 @@ reading or deleting, so `store`/`lookup`/`clear` (and `rm`) all work even with
 GUI clicking, no per-item prompts. Needs a Secret Service provider on the session
 bus (so for a boot-time systemd unit, ensure the keyring is up/unlocked).
 
+Lookups try the **default** collection first, then fall back to a **service-wide
+search across all collections** (the same thing `secret-tool` does). New secrets
+are stored into the default collection, but they're still found if it later isn't
+the default — e.g. KeePassXC with more than one database unlocked, where the
+`default` alias can point at a different database run to run. `rm` deletes
+matching items in *every* collection.
+
+### Verbose / debugging
+
+Pass `-v` (`ss-fetcher -v …`) or set `SSFETCHER_DEBUG=1` to trace what happens on
+stderr: the D-Bus connection, the collections and which is default, and — per
+lookup — the attributes searched, how many items matched (and where), and the
+byte length read. **Secret values are never printed.** This is the quickest way
+to see *why* a lookup misses (wrong attributes, or the item living in a
+collection that isn't currently the default):
+
+```bash
+ss-fetcher -v -r .secretrc list
+SSFETCHER_DEBUG=1 ss-fetcher env-export      # e.g. from a systemd unit's env
+```
+
 ### HashiCorp Vault
 
 Talks to Vault's KV engine over HTTP (standard library only — no extra

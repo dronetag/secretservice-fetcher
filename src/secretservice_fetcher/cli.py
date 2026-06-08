@@ -11,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from . import runner
+from . import debug, runner
 from .backend import Backend, BackendError, make_backend
 from .config import (
     SECRETRC_FILENAME,
@@ -153,10 +153,21 @@ def _env_entry(rc: RcSecret, var: str) -> EnvEntry:
     help=f"Path to the config file (default: $SECRETRC, else search "
     f"cwd/parents for {SECRETRC_FILENAME}).",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    "--debug",
+    "verbose",
+    is_flag=True,
+    help="Verbose debug tracing to stderr (or set SSFETCHER_DEBUG=1). "
+    "Never prints secret values.",
+)
 @click.pass_context
-def main(ctx: click.Context, secretrc: Path | None) -> None:
+def main(ctx: click.Context, secretrc: Path | None, verbose: bool) -> None:
     """Store and load config files and env secrets via Secret Service or Vault."""
 
+    debug.enable(verbose)
+    debug.log(f"secretrc={secretrc} argv={sys.argv[1:]}")
     ctx.ensure_object(dict)
     ctx.obj["secretrc"] = secretrc
 
