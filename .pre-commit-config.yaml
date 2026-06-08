@@ -1,0 +1,61 @@
+# File introduces automated checks triggered on git events
+# to enable run `pip install pre-commit && pre-commit install`
+
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+  # - prepare-commit-msg  # allow together with gira
+
+default_stages:
+  - pre-commit
+
+repos:
+  - repo: local
+    hooks:
+
+    - id: ruff
+      name: ruff
+      entry: ruff check
+      language: system
+      types: [python]
+      stages: [pre-commit]
+
+    - id: ruff-format
+      name: ruff format
+      entry: ruff format
+      language: system
+      types: [python]
+      stages: [pre-commit]
+
+  - repo: https://github.com/dronetag/pre-commit-hooks
+    rev: v1.1.0
+    hooks:
+    - id: check-email-domain
+      args: ["dronetag.cz", "dronetag.com"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    - id: check-added-large-files
+    - id: check-docstring-first
+    - id: check-json
+    - id: check-toml
+    - id: check-yaml
+    - id: check-merge-conflict
+    - id: detect-private-key
+    - id: mixed-line-ending
+      args: [--fix=lf]
+    - id: end-of-file-fixer
+    - id: trailing-whitespace
+
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.13.0
+    hooks:
+    - id: commitlint
+      stages: [commit-msg]
+
+  # - repo: https://github.com/dronetag/gira
+  #   rev: v1.1.0
+  #   hooks:
+  #   - id: gira
+  #     # args: [--config, pyproject.toml]

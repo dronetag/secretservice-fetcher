@@ -1,0 +1,60 @@
+# PREPARE pattern: systemd runs YOUR program directly, so your program is the
+# process systemd supervises (the parent) -- ss-fetcher only runs as a
+# short-lived pre/post step. Use this when wrapping causes problems (signal
+# forwarding, MainPID/cgroup tracking, sd_notify, etc.).
+#
+# Flow:
+#   ExecStartPre=  ss-fetcher prepare   -> writes config file(s) + an
+#                  EnvironmentFile into %t/ss-fetcher/<id>/ (0600).
+#   EnvironmentFile= loads those env vars for ExecStart (read AFTER ExecStartPre).
+#   ExecStart=     your program, reading the materialised config path.
+#   ExecStopPost=  ss-fetcher cleanup   -> shreds that directory.
+#
+# %t is the runtime dir ($XDG_RUNTIME_DIR for user units, /run for system units),
+# i.e. the same place `ss-fetcher prepare` writes. Run `ss-fetcher
+# paths` to print the exact paths for your <id>.
+#
+# Prerequisites:
+#   * secrets stored once (save / set-env), and `ss-fetcher` on PATH.
+#   * If backend = "vault": make $VAULT_TOKEN (and $VAULT_ADDR) available to the
+#     unit, e.g. via a root-only EnvironmentFile or systemd credentials:
+#         EnvironmentFile=%h/.config/dummy/vault.env   # contains VAULT_TOKEN=...
+#
+# Install to: ~/.config/systemd/user/dummy.service
+
+[Unit]
+Description=Dummy service (secrets prepared out-of-band)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dummy
+
+# Let systemd own the run directory: it creates %t/ss-fetcher/dummy (0700, owned
+# by this unit's user) before any Exec*, and REMOVES it on stop. systemd also
+# exports $RUNTIME_DIRECTORY=<that path>, which ss-fetcher auto-detects and writes
+# to -- so prepare/cleanup track this directory exactly (its name need not even
+# match `id`, and you don't have to think about runtime_dir/%t at all).
+RuntimeDirectory=ss-fetcher/dummy
+# RuntimeDirectoryMode=0700   # default; the 0600 secret files inside are fine
+
+# For a SYSTEM unit (not --user) XDG_RUNTIME_DIR is unset, so pin the tool's base
+# to match %t (=/run). Harmless for user units; uncomment for a system service:
+# Environment=XDG_RUNTIME_DIR=%t
+
+ExecStartPre=ss-fetcher -r /opt/dummy/.secretrc prepare
+# The leading '-' tolerates a missing file (e.g. when there are no [[env]] vars).
+EnvironmentFile=-%t/ss-fetcher/dummy/env
+ExecStart=/opt/dummy/venv/bin/python3 /opt/dummy/app.py --config %t/ss-fetcher/dummy/prod.yaml
+# RuntimeDirectory= already removes the dir on stop; this also shreds the files
+# explicitly (what you'd use WITHOUT RuntimeDirectory=). Required if any config
+# has `writeback = true` -- cleanup then saves the program's changes (e.g. a
+# rotated refresh token) back to the store, so keep the keyring reachable at stop.
+ExecStopPost=ss-fetcher -r /opt/dummy/.secretrc cleanup
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

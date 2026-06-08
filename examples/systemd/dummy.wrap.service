@@ -1,0 +1,46 @@
+# WRAP pattern: ss-fetcher is the parent process and wraps the program.
+# At start the config is pulled from the backend into a private 0600 file under
+# $XDG_RUNTIME_DIR, its path is substituted for {config} (and exported as
+# $APP_CONFIG), [[env]] secrets are injected, and the file is shredded when the
+# program exits. No plaintext config on disk.
+#
+# Caveat: here `ss-fetcher` is what systemd supervises -- it execs/waits on
+# your program as a child. If you need systemd to supervise YOUR program directly
+# (so it is the parent -- avoids issues with cgroup/MainPID/signals for some
+# daemons), use dummy.prepare.service instead.
+#
+# Prerequisites:
+#   * `ss-fetcher` on PATH (e.g. pipx install ./ss-fetcher). If not on
+#     the unit's PATH, use the absolute path to the console script in ExecStart.
+#   * The secrets stored once:  cd /opt/dummy && ss-fetcher save prod.yaml
+#                                              && ss-fetcher set-env O365_CLIENT_ID ...
+#   * A .secretrc next to the project (referenced below via -r).
+#
+# Install to: ~/.config/systemd/user/dummy.service
+#   systemctl --user daemon-reload && systemctl --user start dummy.service
+#   journalctl --user -u dummy.service -e
+
+[Unit]
+Description=Dummy service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/dummy
+
+# `run` writes its temp file under $XDG_RUNTIME_DIR (set for --user units; equals
+# %t) and shreds it on exit. For a SYSTEM unit, XDG_RUNTIME_DIR is unset, so pin
+# it to the unit runtime dir; uncomment for a system service:
+# Environment=XDG_RUNTIME_DIR=%t
+
+# -r/--secretrc is optional if WorkingDirectory (or a parent) already contains a
+# .secretrc -- ss-fetcher searches upward by default.
+ExecStart=ss-fetcher -r /opt/dummy/.secretrc run -- \
+    /opt/dummy/venv/bin/python3 /opt/dummy/app.py --config {config}
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

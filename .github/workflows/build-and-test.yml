@@ -1,0 +1,113 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+    outputs:
+      existed:
+        description: "String true|false describing previous existence of the version"
+        value: ${{ jobs.get-version.outputs.existed }}
+      version:
+        description: "New released version in form of X.Y.Z"
+        value: ${{ jobs.get-version.outputs.version }}
+      prerelease:
+        description: "String true|false whether the version is a pre-release"
+        value: ${{ jobs.get-version.outputs.prerelease }}
+      changelog:
+        description: "Changelog string in markdown format"
+        value: ${{ jobs.get-version.outputs.changelog }}
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_MIN_VERSION: '3.11'
+
+jobs:
+
+  get-version:
+    uses: ./.github/workflows/get-version.yml
+    secrets: inherit
+
+  build:
+    name: Build the package
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [get-version]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_MIN_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_MIN_VERSION }}
+
+      - name: Export version to __version__.py
+        run: |
+          echo 'version="${{ needs.get-version.outputs.version }}"' | tee src/*/__version__.py
+          cat src/*/__version__.py
+
+      - name: Build package
+        run: |
+          pip install --upgrade build
+          python -m build
+
+      - name: Export built package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  test:
+    needs: [build, get-version]
+    name: Run automated tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    env:
+      VERSION: ${{ needs.get-version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built package
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: pip install $(find dist/ -name '*.tar.gz')  --extra-index-url 'https://${{ secrets.PRIV_PIP_USER }}:${{ secrets.PRIV_PIP_PASSWORD }}@${{ secrets.PRIV_PIP_HOST }}'
+
+      - name: Run tests with coverage
+        run: |
+          pip install pytest pytest-cov
+          pytest --cov | tee .pytest-coverage.txt; exit ${PIPESTATUS[0]}
+
+      - name: Create coverage comment (great for examining pull-requests)
+        id: coverage
+        if: env.PYTHON_MIN_VERSION == matrix.python-version
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-coverage-path: .pytest-coverage.txt
+
+      # - name: Create the Badge
+      #   if: needs.get-version.outputs.prerelease == 'false'
+      #   uses: schneegans/dynamic-badges-action@v1.6.0
+      #   with:
+      #     auth: ${{ secrets.GIST_UPDATE_TOKEN }}  # see README.md on how to obtain the gist token ...
+      #     gistID: ${{ secrets.GIST_ID }}  # ... and the ID
+      #     filename: coverage.json
+      #     label: Test Coverage Report for firmware-bundler
+      #     message: ${{ steps.coverage.outputs.coverage }}
+      #     color: ${{ steps.coverage.outputs.color }}
+      #     namedLogo: python

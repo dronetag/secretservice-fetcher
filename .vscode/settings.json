@@ -1,0 +1,30 @@
+{
+    "cSpell.words": [
+        "asyncio",
+        "Dronetag",
+        "gira",
+        "hvac",
+        "keyring",
+        "KeePassXC",
+        "KWallet",
+        "libsecret",
+        "materialise",
+        "materialised",
+        "pypi",
+        "pytest",
+        "pyflakes",
+        "pycodestyle",
+        "pydantic",
+        "secretrc",
+        "secretservice",
+        "setuptools",
+        "venv"
+    ],
+    "python.analysis.typeCheckingMode": "strict",
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff"
+    }
+}

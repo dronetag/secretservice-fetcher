@@ -1,0 +1,15 @@
+/dist
+/build
+/.vscode/launch.json
+
+.venv
+.idea
+.gira_cache
+.mypy_cache
+.pytest_cache
+.ruff_cache
+
+*.egg-info
+*.pyc
+*.pyo
+__pycache__

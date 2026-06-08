@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools >= 68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secretservice-fetcher"
+requires-python = ">=3.11"
+description = "Fetch config files and env-var secrets from the Secret Service or Vault and feed them to a command (CLI: ss-fetcher)."
+license.text = "MIT"
+authors = [
+  {name = "Dronetag", email = "lukas@dronetag.com"},
+]
+dynamic = ["version", "readme", "dependencies"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "secretservice_fetcher.__version__.version"}
+readme = {file = ["README.md"], content-type = "text/markdown"}
+dependencies = {file = ["requirements.txt"]}
+
+[project.scripts]
+ss-fetcher = "secretservice_fetcher.cli:main"
+
+[project.optional-dependencies]
+# extra dependencies for development
+dev = [
+  "build",
+  "pytest",
+  "pytest-cov",
+  "twine",
+  "ruff"
+]
+
+[tool.ruff]
+line-length = 100
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["F", "E", "I"]  # F: pyflakes, E: pycodestyle, I: isort
+ignore = []
+exclude = ["src/*/protos/*", "tests/*"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+# tests should test installed package hence no src/ prefix anywhere
+log_cli = 1  # (dis)allow pytest to pass through logs into the main console
+
+[tool.pyright]
+# we use pyright for type checking because it is built into VScode. Preferably in
+# strict mode. You can omit single lines in code by adding # type: ignore
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"

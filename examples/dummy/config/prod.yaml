@@ -1,0 +1,9 @@
+# Fake production config -- the kind of file you do NOT want sitting on disk.
+# Store it with `ss-fetcher save prod.yaml`, then delete this plaintext.
+database:
+  host: db.internal.example.com
+  user: dummy
+  password: "FAKE-do-not-use"
+api:
+  base_url: https://api.example.com
+  api_key: "live_FAKE_0123456789abcdef"

@@ -1,0 +1,55 @@
+name: "Release"
+
+on:
+  # on workflow_dispatch means that you run it manually from "Actions" tab
+  workflow_dispatch:
+  # if you want automatic releases upon push to the main branch then uncomment
+  # following lines:
+  # push:
+  #   branches:
+  #     - main
+
+jobs:
+
+  build-and-test:
+    uses: ./.github/workflows/build-and-test.yml
+    secrets: inherit
+
+  release-python:
+    name: Publish python package to pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [build-and-test]
+    steps:
+    - name: Download built packages
+      uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist
+
+    - name: Publish the package
+      uses: dronetag/actions/release-python@main
+      with:
+        pypi-name: dronetag
+        pypi-host: ${{ secrets.PRIV_PIP_HOST }}
+        pypi-user: ${{ secrets.PRIV_PIP_USER }}
+        pypi-pass: ${{ secrets.PRIV_PIP_PASSWORD }}
+
+
+  release-git:
+    name: Release new version to git and github
+    if: needs.build-and-test.outputs.existed == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [build-and-test]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create tag and release
+        uses: dronetag/actions/release@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ needs.build-and-test.outputs.version }}
+          changelog: ${{ needs.build-and-test.outputs.changelog }}
+          tag-only: ${{ needs.build-and-test.outputs.prerelease }}

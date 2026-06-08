@@ -1,0 +1,19 @@
+# BEFORE: the original unit. The config file has to exist on disk in plaintext
+# (e.g. WorkingDirectory/prod.yaml), which is exactly what we want to avoid.
+#
+# Install to: ~/.config/systemd/user/dummy.service
+
+[Unit]
+Description=Dummy service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/dummy/venv/bin/python3 /opt/dummy/app.py
+WorkingDirectory=/opt/dummy
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
